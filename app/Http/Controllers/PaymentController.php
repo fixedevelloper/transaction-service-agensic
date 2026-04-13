@@ -2,21 +2,25 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Helpers\Helpers;
+use App\Http\Resources\PaymentLinkResource;
 use App\Models\PaymentLink;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 
 class PaymentController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        $payment = PaymentLink::all();
+        $userId = $request->header('X-User-Id');
 
-        return response()->json([
-            'success' => true,
-            'data' => $payment
-        ]);
+        $payments = PaymentLink::where('user_id', $userId)
+            ->latest()
+            ->paginate(50);
+
+        return Helpers::success(PaymentLinkResource::collection($payments));
     }
+
     public function create(Request $request)
     {
         $data = $request->validate([
