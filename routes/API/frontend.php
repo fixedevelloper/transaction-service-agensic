@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\CallbackController;
+use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\PaymentController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\SenderController;
@@ -43,3 +44,7 @@ Route::prefix('payments')->group(function () {
 
 // webhook public
 Route::post('/webhooks/payment', [CallbackController::class, 'handle']);
+Route::get('/customer/dashboard', [
+    DashboardController::class,
+    'index'
+]);
