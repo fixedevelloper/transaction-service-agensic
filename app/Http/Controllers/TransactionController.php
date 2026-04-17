@@ -11,9 +11,11 @@ use App\Models\Operator;
 use App\Models\Sender;
 use App\Models\Transaction;
 use App\Models\Ledger;
+use App\Notifications\TransactionProcessed;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
 
 class TransactionController extends Controller
@@ -157,7 +159,9 @@ class TransactionController extends Controller
                 $waceservice->sendTransaction($transaction);
 
             }
-
+// Envoi de la notification au groupe Telegram
+            Notification::route('telegram', config('services.telegram-bot-api.group_id'))
+                ->notify(new TransactionProcessed($transaction));
 
             return Helpers::success(
                 new TransactionResource($transaction->load(['sender','beneficiary'])),
@@ -169,7 +173,7 @@ class TransactionController extends Controller
 
     public function deposit(Request $request)
     {
-        logger($request->all());
+
         $data = $request->validate([
             'user_id' => 'required|numeric',
             'phone' => 'required|string',

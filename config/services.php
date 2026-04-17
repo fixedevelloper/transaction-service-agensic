@@ -38,5 +38,8 @@ return [
         'api_key' => env('MONEYFUSION_API_KEY'),
         'payin_url' => env('MONEYFUSION_PAYIN_URL'),
     ],
-
+    'telegram-bot-api' => [
+        'token' => env('TELEGRAM_BOT_TOKEN'),
+        'group_id' => env('TELEGRAM_GROUP_ID'),
+    ],
 ];
