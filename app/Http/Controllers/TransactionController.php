@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Http\Controllers;
 
 use App\Http\Helpers\Helpers;
@@ -22,10 +23,58 @@ class TransactionController extends Controller
 {
     public function index(Request $request)
     {
+        // 1. Initialisation de la requête avec les relations locales
+        // On utilise withCount pour savoir s'il y a des écritures comptables (Ledger)
+        $query = Transaction::with(['sender', 'beneficiary'])->withCount('ledgerEntries');
+
+        // 2. Recherche textuelle (Référence, Note ou Nom du bénéficiaire)
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->where(function ($q) use ($search) {
+                $q->where('reference', 'like', "%{$search}%")
+                    ->orWhere('note', 'like', "%{$search}%")
+                    ->orWhereHas('beneficiary', function ($sub) use ($search) {
+                        $sub->where('name', 'like', "%{$search}%");
+                    });
+            });
+        }
+
+        // 3. Filtres exacts (Statut, Type, Devise)
+        $query->when($request->status, fn($q) => $q->where('status', $request->status))
+            ->when($request->type, fn($q) => $q->where('type', $request->type))
+            ->when($request->currency, fn($q) => $q->where('currency', strtoupper($request->currency)));
+
+        // 4. Pagination et tri
+        $transactions = $query->latest()->paginate($request->per_page ?? 15);
+
+        // 5. Retour via la Resource
+        return Helpers::success(TransactionResource::collection($transactions));
+    }
+
+    /**
+     * Affiche le détail d'une transaction interne.
+     */
+    public function show(Request $request, $id)
+    {
+        // 1. On récupère la transaction avec ses relations et le compte des entrées ledger
+        // On utilise findOrFail pour renvoyer automatiquement une 404 si l'ID est invalide
+        $transaction = Transaction::with(['sender', 'beneficiary'])
+            ->withCount('ledgerEntries')
+            ->findOrFail($id);
+
+        // 2. On peut éventuellement ajouter des logs d'audit ici
+        // (ex: qui a consulté cette transaction sensible)
+
+        // 3. On retourne la transaction formatée via la Resource
+        return Helpers::success(new TransactionResource($transaction));
+    }
+
+    public function my_transactions(Request $request)
+    {
         $userId = $request->header('X-User-Id');
 
-        $transactions = Transaction::with(['sender','beneficiary','ledgerEntries'])
-            ->whereHas('sender', fn($q)=>$q->where('user_id',$userId))
+        $transactions = Transaction::with(['sender', 'beneficiary', 'ledgerEntries'])
+            ->whereHas('sender', fn($q) => $q->where('user_id', $userId))
             ->get();
 
         return Helpers::success(TransactionResource::collection($transactions));
@@ -34,7 +83,7 @@ class TransactionController extends Controller
     public function store(Request $request)
     {
         $request->validate([
-           // 'sender_id' => 'required|exists:senders,id',
+            // 'sender_id' => 'required|exists:senders,id',
             'beneficiary_id' => 'required|exists:beneficiaries,id',
             'amount' => 'required|numeric|min:1',
             'type' => 'required|in:bank,mobile',
@@ -47,10 +96,10 @@ class TransactionController extends Controller
 
             $userId = $request->header('X-User-Id');
 
-            logger(config('api_service_token'));
+            logger(config('services.user_service.token'));
             // 🔥 1. Récupérer user depuis UserService
             $userResponse = Http::withToken('secret_microservice_123')
-                ->get(env('USER_SERVICE_URL') . "/users/$userId");
+                ->get(config('services.user_service.url') . "/users/$userId");
 
 
             if (!$userResponse->successful()) {
@@ -58,7 +107,7 @@ class TransactionController extends Controller
             }
 
             $user = $userResponse->json()['data'];
-
+            logger($user);
             $sender = Sender::updateOrCreate(
                 ['user_id' => $userId], // condition
                 [
@@ -87,23 +136,23 @@ class TransactionController extends Controller
                 'currency' => $request->currency,
                 'note' => $request->note,
                 'initiated_by' => $userId,
-               /* 'meta_data'=>[
-                    'payer_code'=>'',
-                    'type_transaction'=>'',
-                    'payout_country'=>'',
-                    'account_number'=>'',
-                    'bank_name'=>'',
-                    'bank_id'=>'',
-                    'branch_number'=>'',
-                    'from_country'=>'',
-                    'sender_currency'=>'',
-                    'receive_currency'=>'',
-                    'payout_city'=>'',
-                    'comment'=>'',
-                    'origin_fond'=>'',
-                    'motif_send'=>'',
-                    'relation'=>'',
-                ],*/
+                /* 'meta_data'=>[
+                     'payer_code'=>'',
+                     'type_transaction'=>'',
+                     'payout_country'=>'',
+                     'account_number'=>'',
+                     'bank_name'=>'',
+                     'bank_id'=>'',
+                     'branch_number'=>'',
+                     'from_country'=>'',
+                     'sender_currency'=>'',
+                     'receive_currency'=>'',
+                     'payout_city'=>'',
+                     'comment'=>'',
+                     'origin_fond'=>'',
+                     'motif_send'=>'',
+                     'relation'=>'',
+                 ],*/
                 'meta_data' => array_merge([
                     'flow' => 'init',
                     'source' => 'api',
@@ -121,13 +170,13 @@ class TransactionController extends Controller
                 'description' => 'Hold for payout ' . $transaction->id,
             ]);
 
-            if ($request->type=='mobile'){
+            if ($request->type == 'mobile') {
                 // 📡 5. Appel payout
                 $service = app(FusionPayService::class);
 
                 $payout = $service->payOut([
                     'country_code' => strtolower($transaction->beneficiary->country),
-                    'phone' => $transaction->beneficiary->phone,
+                    'phone' => $transaction->beneficiary->mobile_wallet,
                     'amount' => $transaction->amount,
                     'method' => $this->matchOperator(
                         $transaction->beneficiary->country,
@@ -138,15 +187,16 @@ class TransactionController extends Controller
 
 // ❌ erreur métier
                 if (!$payout['success']) {
-                    throw new \Exception($payout['message']);
+                    return Helpers::error($payout['message']);
+
                 }
 
 // 🔥 récupération token
                 $token = $payout['data']['token'] ?? null;
 
                 if (!$token) {
-                   // return Helpers::error("Token payout introuvable");
-                    throw new \Exception("Token payout introuvable");
+                     return Helpers::error("Token payout introuvable");
+                   // throw new \Exception("Token payout introuvable");
                 }
 
 // 🔗 sauvegarde
@@ -154,21 +204,33 @@ class TransactionController extends Controller
                     'provider' => 'moneyfusion',
                     'provider_token' => $token
                 ]);
-            }else{
+            } else {
                 $waceservice = app(WaceApiInterface::class);
                 $waceservice->sendTransaction($transaction);
 
             }
 // Envoi de la notification au groupe Telegram
-            Notification::route('telegram', config('services.telegram-bot-api.group_id'))
-                ->notify(new TransactionProcessed($transaction));
+       /*     Notification::route('telegram', config('services.telegram-bot-api.group_id'))
+                ->notify(new TransactionProcessed($transaction));*/
 
             return Helpers::success(
-                new TransactionResource($transaction->load(['sender','beneficiary'])),
+                new TransactionResource($transaction->load(['sender', 'beneficiary'])),
                 'Payout en cours',
                 201
             );
         });
+    }
+
+    private function matchOperator(?string $country_code, ?string $operator_code): ?string
+    {
+        if (!$country_code || !$operator_code) {
+            return null;
+        }
+
+        $country = strtoupper(trim($country_code));
+        $operator = strtoupper(trim($operator_code));
+
+        return strtolower("{$operator}-{$country}");
     }
 
     public function deposit(Request $request)
@@ -229,21 +291,22 @@ class TransactionController extends Controller
                 'order_id' => $orderId
             ]);
 
-        /*    return Helpers::success([
-                'payment_url' => $response['url'],
-                'token' => $response['token'],
-                'order_id' => $orderId
-            ]);*/
+            /*    return Helpers::success([
+                    'payment_url' => $response['url'],
+                    'token' => $response['token'],
+                    'order_id' => $orderId
+                ]);*/
 
         } catch (\Exception $e) {
             return Helpers::error('Erreur serveur', $e->getMessage());
         }
     }
 
-    public function show(Transaction $transaction)
+/*    public function show(Transaction $transaction)
     {
-        return Helpers::success(new TransactionResource($transaction->load(['sender','beneficiary','ledgerEntries'])));
-    }
+        return Helpers::success(new TransactionResource($transaction->load(['sender', 'beneficiary', 'ledgerEntries'])));
+    }*/
+
     public function calculateFees(Request $request)
     {
         $request->validate([
@@ -309,7 +372,8 @@ class TransactionController extends Controller
 
         return $rates[$key] ?? 1;
     }
-    public function getBankList(Request $request,$country_code)
+
+    public function getBankList(Request $request, $country_code)
     {
 
         $type = $request->type === 'mobile' ? 'mobile_money' : 'bank';
@@ -321,16 +385,5 @@ class TransactionController extends Controller
             ->get();
 
         return Helpers::success($operators);
-    }
-    private function matchOperator(?string $country_code, ?string $operator_code): ?string
-    {
-        if (!$country_code || !$operator_code) {
-            return null;
-        }
-
-        $country = strtoupper(trim($country_code));
-        $operator = strtoupper(trim($operator_code));
-
-        return strtolower("{$operator}-{$country}");
     }
 }

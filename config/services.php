@@ -42,4 +42,8 @@ return [
         'token' => env('TELEGRAM_BOT_TOKEN'),
         'group_id' => env('TELEGRAM_GROUP_ID'),
     ],
+    'user_service'=>[
+        'url' => env('USER_SERVICE_URL'),
+        'token' => env('API_SERVICE_TOKEN'),
+    ]
 ];
