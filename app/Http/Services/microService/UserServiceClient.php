@@ -43,40 +43,46 @@ class UserServiceClient
             return $response->successful() ? $response->json('data') : null;
         });
     }
-    public function credit($transaction)
-    {
-        // Si la transaction a déjà été validée entre-temps, on arrête.
-        if ($transaction->status === 'success') {
-            return;
-        }
-
-        $response = Http::withToken(config('services.user_service.token'))
-            ->post(config('services.user_service.url') . '/users-credit', [
-                'user_id'   => $transaction->user_id,
-                'amount'    => $transaction->amount,
-                'reference' => $transaction->reference,
-            ]);
-
-        if ($response->successful()) {
-            $transaction->update([
-                //'status' => 'success',
-                'processed_at' => now()
-            ]);
-
-            Log::info("Crédit réussi via  pour : " . $transaction->reference);
-        } else {
-            // Si le code est 4xx (erreur client), inutile de retenter 10 fois
-            if ($response->clientError()) {
-                Log::error("Erreur critique (4xx) sur le service User : " . $response->body());
-                $this->fail(new \Exception("Erreur client non récupérable"));
-                return;
-            }
-
-            // Pour les 5xx ou erreurs réseau, le Job sera automatiquement
-            // remis en file d'attente grâce au throw
-            throw new \Exception("Microservice User indisponible, nouvelle tentative...");
-        }
+public function credit($transaction)
+{
+    // 1. Sécurité : On ne rembourse JAMAIS une transaction qui a réussi 
+    // ou qui a déjà été marquée comme remboursée (failed_and_refunded)
+    if ($transaction->status === 'success' || $transaction->status === 'failed') {
+        Log::warning("Tentative de crédit ignorée : La transaction {$transaction->reference} est déjà finalisée.");
+        return true;
     }
+
+    // 2. Appel au microservice de crédit (Remboursement)
+    $response = Http::withToken(config('services.user_service.token'))
+        ->timeout(15)
+        ->post(config('services.user_service.url') . '/users-credit', [
+            'user_id'   => $transaction->initiated_by, // Cohérence avec ton modèle (user_id vs initiated_by)
+            'amount'    => $transaction->amount,
+            'reference' => "REFUND-" . $transaction->reference, // Préfixe pour la traçabilité
+        ]);
+
+    // 3. Traitement de la réponse
+    if ($response->successful()) {
+        $transaction->update([
+            'status' => 'failed', // Nouvel état pour éviter les doubles remboursements
+            'processed_at' => now(),
+            'note' => $transaction->note . " | Remboursé le " . now()->format('d/m/Y H:i')
+        ]);
+
+        Log::info("Remboursement réussi pour : " . $transaction->reference);
+        return true;
+    }
+
+    // 4. Gestion des erreurs fatales (4xx)
+    if ($response->clientError()) {
+        Log::critical("Erreur fatale lors du remboursement (4xx) : " . $response->body());
+        // On ne jette pas d'exception pour ne pas bloquer la file d'attente
+        return false;
+    }
+
+    // 5. Erreurs temporaires (5xx, Timeout)
+    throw new \Exception("UserService instable pour le crédit, nouvelle tentative prévue...");
+}
   public function debit($transaction)
 {
     // 1. Sécurité : On s'assure que la transaction n'est pas déjà traitée

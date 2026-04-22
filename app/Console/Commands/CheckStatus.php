@@ -2,9 +2,9 @@
 
 namespace App\Console\Commands;
 
+use App\Http\Services\microService\UserServiceClient;
+use App\Http\Services\WacePay\WaceApiService;
 use App\Models\Transaction;
-use App\Services\WaceApiService;
-use App\Services\UserServiceClient;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
