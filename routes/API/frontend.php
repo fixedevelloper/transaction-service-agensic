@@ -30,7 +30,8 @@ Route::middleware(['api'])->group(function () {
     Route::post('transactions', [TransactionController::class, 'store']);
     Route::get('transactions/{transaction}', [TransactionController::class, 'show']);
     Route::post('calculate-fees', [TransactionController::class, 'calculateFees']);
-    Route::get('banks/{country_code}', [TransactionController::class, 'getBankList']);
+    Route::get('banks', [TransactionController::class, 'getBankList']);
+     Route::get('wace-data', [TransactionController::class, 'getWaceData']);
 });
 Route::post('/moneyfusion/webhook', [CallbackController::class, 'payoutWebhook'])->name('moneyfusion_webhook');
 Route::prefix('payments')->group(function () {

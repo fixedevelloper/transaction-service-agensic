@@ -10,6 +10,7 @@ class Sender extends Model
 
     protected $fillable = [
         'user_id',
+        'code',
         'name',
         'phone',
         'email',

@@ -5,13 +5,17 @@ namespace App\Http\Controllers;
 use App\Http\Helpers\Helpers;
 use App\Http\Resources\TransactionResource;
 use App\Http\Services\FusionPay\FusionPayService;
+use App\Http\Services\microService\UserServiceClient;
 use App\Http\Services\WacePay\WaceApiInterface;
 use App\Http\Services\WacePay\WaceApiService;
+use App\Jobs\ProcessUserDebit;
+use App\Models\Beneficiary;
 use App\Models\Gateway;
 use App\Models\Operator;
 use App\Models\Sender;
 use App\Models\Transaction;
 use App\Models\Ledger;
+use App\Models\WaceData;
 use App\Notifications\TransactionProcessed;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -83,142 +87,172 @@ class TransactionController extends Controller
     public function store(Request $request)
     {
         $request->validate([
-            // 'sender_id' => 'required|exists:senders,id',
             'beneficiary_id' => 'required|exists:beneficiaries,id',
             'amount' => 'required|numeric|min:1',
             'type' => 'required|in:bank,mobile',
+            'operator' => 'required_if:type,bank', // Optionnel mais conseillé
             'note' => 'nullable|string',
             'currency' => 'nullable|string',
             'meta_data' => 'nullable|array',
         ]);
 
-        return DB::transaction(function () use ($request) {
+        // --- 1. Pré-chargement hors transaction ---
+        $userId = $request->header('X-User-Id');
+        $beneficiary = Beneficiary::findOrFail($request->beneficiary_id);
+        $gateway = Gateway::where('code', $request->operator)->first();
 
-            $userId = $request->header('X-User-Id');
+        if (!$gateway && $request->type == 'mobile') {
+            return Helpers::error("Opérateur invalide", 400);
+        }
 
-            logger(config('services.user_service.token'));
-            // 🔥 1. Récupérer user depuis UserService
-            $userResponse = Http::withToken('secret_microservice_123')
+        try {
+            // --- 2. Appel UserService (Hors transaction DB pour éviter les verrous longs) ---
+            $userResponse = Http::withToken(config('services.user_service.token'))
+                ->timeout(10)
                 ->get(config('services.user_service.url') . "/users/$userId");
 
-
             if (!$userResponse->successful()) {
-                throw new \Exception("UserService indisponible");
+                return Helpers::error("Profil utilisateur introuvable ou service indisponible.", 503);
             }
 
             $user = $userResponse->json()['data'];
-            logger($user);
-            $sender = Sender::updateOrCreate(
-                ['user_id' => $userId], // condition
-                [
+
+            if ($user['balance'] < $request->amount) {
+                return Helpers::error("Solde insuffisant.", 400);
+            }
+
+            // --- 3. Début de la Transaction DB ---
+            return DB::transaction(function () use ($request, $userId, $user, $beneficiary, $gateway) {
+
+                // Mise à jour du Sender
+                $sender = Sender::firstOrNew(['user_id' => $userId]);
+                $sender->fill([
                     'name' => $user['name'],
                     'phone' => $user['phone'],
                     'email' => $user['email'],
-                    'country' => $user['country']['iso'] ?? null,
-                    'address' => $user['address'] ?? null,
-                    'identification_number' => $user['identification_number'] ?? null,
+                    'country' => $user['country_code'] ?? null,
+                    'identification_number' => (string) ($user['identification_number'] ?? ''),
                     'identification_type' => $user['identification_type'] ?? null,
                     'identification_expired' => $user['identification_expired'] ?? null,
-                ]
-            );
-            // 🔒 2. Vérifier solde
-            if ($user['balance'] < $request->amount) {
-                throw new \Exception("Solde insuffisant");
-            }
-            $meta = $request->input('meta_data', []);
-            // 🔥 3. Créer transaction
-            $transaction = Transaction::create([
-                'sender_id' => $sender->id,
-                'beneficiary_id' => $request->beneficiary_id,
-                'amount' => $request->amount,
-                'type' => $request->type,
-                'status' => 'pending',
-                'currency' => $request->currency,
-                'note' => $request->note,
-                'initiated_by' => $userId,
-                /* 'meta_data'=>[
-                     'payer_code'=>'',
-                     'type_transaction'=>'',
-                     'payout_country'=>'',
-                     'account_number'=>'',
-                     'bank_name'=>'',
-                     'bank_id'=>'',
-                     'branch_number'=>'',
-                     'from_country'=>'',
-                     'sender_currency'=>'',
-                     'receive_currency'=>'',
-                     'payout_city'=>'',
-                     'comment'=>'',
-                     'origin_fond'=>'',
-                     'motif_send'=>'',
-                     'relation'=>'',
-                 ],*/
-                'meta_data' => array_merge([
+                ]);
+
+                if ($sender->isDirty()) {
+                    $sender->save();
+                }
+
+                // Préparation des méta-données
+                $meta = array_merge([
                     'flow' => 'init',
                     'source' => 'api',
-                ], $meta),
-            ]);
+                    'payer_code' => $gateway?->payerCode?->payer_code,
+                    'type_transaction' => ($sender->type ?? 'P') . ($beneficiary->type ?? 'P'),
+                    'payout_country' => $beneficiary->country,
+                    'account_number' => $beneficiary->account_number ?? $beneficiary->mobile_wallet,
+                    'bank_name' => $gateway->name ?? null,
+                    'bank_id' => $gateway->bank_id ?? null,
+                    'bank_swcode' => $request->bank_swcode ?? '10002',
+                    'from_country' => $sender->country,
+                    'sender_currency' => 'XAF',
+                    'receive_currency' => $request->currency,
+                    'payout_city' => $beneficiary->city,
+                    'origin_fond' => $request->origin_fond ?? 'Salary',
+                    'motif_send' => $request->motif_send ?? 'Salary',
+                    'relation' => $request->relation ?? 'Brother',
+                ], $request->input('meta_data', []));
 
-            // 🧾 4. Ledger HOLD (pas débit réel)
-            Ledger::create([
-                'user_id' => $userId,
-                'transaction_id' => $transaction->id,
-                'type' => 'debit',
-                'amount' => $transaction->amount,
-                'balance_before' => $user['balance'],
-                'balance_after' => $user['balance'],
-                'description' => 'Hold for payout ' . $transaction->id,
-            ]);
+                $transaction = Transaction::create([
+                    'sender_id' => $sender->id,
+                    'beneficiary_id' => $beneficiary->id,
+                    'amount' => $request->amount,
+                    'type' => $request->type,
+                    'status' => 'pending',
+                    'currency' => $request->currency,
+                    'note' => $request->note,
+                    'initiated_by' => $userId,
+                    'meta_data' => $meta,
+                ]);
 
-            if ($request->type == 'mobile') {
-                // 📡 5. Appel payout
-                $service = app(FusionPayService::class);
-
-                $payout = $service->payOut([
-                    'country_code' => strtolower($transaction->beneficiary->country),
-                    'phone' => $transaction->beneficiary->mobile_wallet,
+                // Ledger HOLD
+                Ledger::create([
+                    'user_id' => $userId,
+                    'transaction_id' => $transaction->id,
+                    'type' => 'debit',
                     'amount' => $transaction->amount,
-                    'method' => $this->matchOperator(
-                        $transaction->beneficiary->country,
-                        $request->operator
-                    ),
-                    'webhook_url' => route('moneyfusion_webhook')
+                    'balance_before' => $user['balance'],
+                    'balance_after' => $user['balance'],
+                    'description' => "Hold for payout #{$transaction->id}",
                 ]);
+                $transaction->refresh();
+                // --- 4. Exécution du Payout ---
+                $this->executePayout($transaction, $request, $gateway);
+               ProcessUserDebit::dispatch($transaction);
+                return Helpers::success(
+                    new TransactionResource($transaction->load(['sender', 'beneficiary'])),
+                    'Payout initié avec succès',
+                    201
+                );
+            });
 
-// ❌ erreur métier
-                if (!$payout['success']) {
-                    return Helpers::error($payout['message']);
+        } catch (\Exception $e) {
+            logger()->critical("Echec Payout: " . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
+            return Helpers::error($e->getMessage(), 500);
+        }
+    }
 
-                }
+    /**
+     * Logique d'exécution isolée
+     */
+    private function executePayout($transaction, $request, $gateway)
+    {
+        if ($request->type == 'mobile') {
+            $payout = app(FusionPayService::class)->payOut([
+                'country_code' => strtolower($transaction->beneficiary->country),
+                'phone' => $transaction->beneficiary->mobile_wallet,
+                'amount' => $transaction->amount,
+                'method' => $this->matchOperator($transaction->beneficiary->country, $request->operator),
+                'webhook_url' => route('moneyfusion_webhook')
+            ]);
 
-// 🔥 récupération token
-                $token = $payout['data']['token'] ?? null;
+            if (!$payout['success'])
+                throw new \Exception("FusionPay: " . $payout['message']);
 
-                if (!$token) {
-                     return Helpers::error("Token payout introuvable");
-                   // throw new \Exception("Token payout introuvable");
-                }
+            $transaction->update(['provider' => 'moneyfusion', 'provider_token' => $payout['data']['token']]);
+        } else {
+            $waceservice = app(WaceApiService::class);
 
-// 🔗 sauvegarde
-                $transaction->update([
-                    'provider' => 'moneyfusion',
-                    'provider_token' => $token
-                ]);
-            } else {
-                $waceservice = app(WaceApiInterface::class);
-                $waceservice->sendTransaction($transaction);
+            // Sender Wace
+            $sResp = $waceservice->createSender($transaction->sender);
+            if (($sResp['status'] ?? 0) !== 201)
+                throw new \Exception("Wace Sender: " . ($sResp['message'] ?? 'Erreur'));
 
+            $sCode = $sResp['sender']['Code'] ?? $sResp['code'];
+            $transaction->sender->update(['code' => $sCode]);
+
+            // Beneficiary Wace
+            $bResp = $waceservice->createBeneficiary($transaction->beneficiary, $sCode);
+            if (($bResp['status'] ?? 0) !== 201)
+                throw new \Exception("Wace Beneficiary: " . ($bResp['message'] ?? 'Erreur'));
+
+            $bCode = $bResp['beneficiary']['Code'] ?? $bResp['Code'];
+            $transaction->beneficiary->update(['code' => $bCode]);
+
+            // Final Transaction
+            $wTx = $waceservice->sendTransaction($transaction);
+            logger($wTx);
+            // On accepte 201 (Created) ou 200 (OK) ou 2000 (Success spécifique Wace)
+            if (!in_array($wTx['data']['status'] ?? 0, [200, 201, 2000])) {
+                logger()->error("Détails de l'échec Wace Final:", ['response' => $wTx]);
+
+                throw new \Exception(
+                    "Erreur prestataire Wace : " . ($wTx['message'] ?? 'La transaction n\'a pas pu être finalisée.')
+                );
             }
-// Envoi de la notification au groupe Telegram
-       /*     Notification::route('telegram', config('services.telegram-bot-api.group_id'))
-                ->notify(new TransactionProcessed($transaction));*/
 
-            return Helpers::success(
-                new TransactionResource($transaction->load(['sender', 'beneficiary'])),
-                'Payout en cours',
-                201
-            );
-        });
+            $transaction->update([
+                'provider' => 'wace',
+                'status' => 'pending'
+            ]); 
+        }
     }
 
     private function matchOperator(?string $country_code, ?string $operator_code): ?string
@@ -262,7 +296,7 @@ class TransactionController extends Controller
                 'webhook_url' => $data['webhook_url'] ?? route('payment.webhook')
             ]);
 
-// ❌ erreur API
+            // ❌ erreur API
             if (!$response['success']) {
                 return Helpers::error(
                     $response['message'] ?? 'Erreur paiement',
@@ -270,13 +304,13 @@ class TransactionController extends Controller
                 );
             }
 
-// 🔥 données API
+            // 🔥 données API
             $dataApi = $response['data'] ?? [];
 
             $url = $dataApi['url'] ?? null;
             $token = $dataApi['token'] ?? null;
 
-// ❌ sécurité
+            // ❌ sécurité
             if (!$url || !$token) {
                 return Helpers::error(
                     'Réponse API invalide (url/token manquant)',
@@ -284,7 +318,7 @@ class TransactionController extends Controller
                 );
             }
 
-// ✅ OK
+            // ✅ OK
             return Helpers::success('Paiement initié', [
                 'payment_url' => $url,
                 'token' => $token,
@@ -302,10 +336,10 @@ class TransactionController extends Controller
         }
     }
 
-/*    public function show(Transaction $transaction)
-    {
-        return Helpers::success(new TransactionResource($transaction->load(['sender', 'beneficiary', 'ledgerEntries'])));
-    }*/
+    /*    public function show(Transaction $transaction)
+        {
+            return Helpers::success(new TransactionResource($transaction->load(['sender', 'beneficiary', 'ledgerEntries'])));
+        }*/
 
     public function calculateFees(Request $request)
     {
@@ -373,9 +407,9 @@ class TransactionController extends Controller
         return $rates[$key] ?? 1;
     }
 
-    public function getBankList(Request $request, $country_code)
+    public function getBankList(Request $request)
     {
-
+    
         $type = $request->type === 'mobile' ? 'mobile_money' : 'bank';
 
         $operators = Gateway::with('payerCode')
@@ -385,5 +419,16 @@ class TransactionController extends Controller
             ->get();
 
         return Helpers::success($operators);
+    }
+        public function getWaceData(Request $request)
+    {
+    
+        $type = $request->type;
+
+        $wacedatas = WaceData::query()
+            ->where('type',$type)
+            ->get();
+
+        return Helpers::success($wacedatas);
     }
 }

@@ -18,8 +18,15 @@ class Transaction extends Model
         'currency',
         'note',
         'initiated_by',
+        'meta_data',
+        'provider',
+        'provider_token'
     ];
-
+protected $casts = [
+    'meta_data' => 'object', // Transforme le JSON en objet PHP (stdClass)
+    // ou
+    // 'meta_data' => 'array', // Si vous préférez travailler avec des tableaux
+];
     // Relations
     public function sender()
     {
