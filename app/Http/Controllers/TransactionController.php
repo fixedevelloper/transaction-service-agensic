@@ -147,7 +147,7 @@ class TransactionController extends Controller
                     'payer_code' => $gateway?->payerCode?->payer_code,
                     'type_transaction' => ($sender->type ?? 'P') . ($beneficiary->type ?? 'P'),
                     'payout_country' => $beneficiary->country,
-                    'account_number' => $beneficiary->account_number ?? $beneficiary->mobile_wallet,
+                    'account_number' => $beneficiary->bank_account ?? $beneficiary->mobile_wallet,
                     'bank_name' => $gateway->name ?? null,
                     'bank_id' => $gateway->bank_id ?? null,
                     'bank_swcode' => $request->bank_swcode ?? '10002',
