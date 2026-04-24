@@ -2,5 +2,5 @@
 
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
-
-Schedule::command('app:check-status')->everyFiveMinutes();
+use Illuminate\Support\Facades\Schedule;
+Schedule::command('app:check-status')->everyTwoMinutes();

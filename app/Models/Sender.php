@@ -8,19 +8,12 @@ class Sender extends Model
 {
     use HasFactory;
 
-    protected $fillable = [
-        'user_id',
-        'code',
-        'name',
-        'phone',
-        'email',
-        'country',
-        'address',
-        'identification_number',
-        'identification_type',
-        'identification_expired',
-        'status',
-    ];
+protected $fillable = [
+    'user_id', 'name', 'account_type', 'phone', 'email', 'country', 
+    'address', 'business_name', 'business_type', 
+    'business_register_date', 'gender', 'date_birth', 
+    'identification_number', 'identification_type', 'identification_expired'
+];
 
     // Un sender peut avoir plusieurs transactions envoyées
     public function transactions()

@@ -45,12 +45,11 @@ class FusionPayService
 
             Log::info("PAYIN REQUEST", $payload);
 
-            $response = Http::timeout(15)
-                ->retry(2, 1000)
+            $response = Http::timeout(30)
                 ->post($this->payinUrl, $payload);
 
             $body = $response->json();
-
+            Log::info("PAYIN BODY", $body);
             // ❌ erreur HTTP ou métier
             if (!$response->successful() || ($body['statut'] ?? true) === false) {
 
@@ -74,17 +73,14 @@ class FusionPayService
             ];
 
         } catch (\Throwable $e) {
+    Log::critical("PAYIN EXCEPTION", [
+        'error' => $e->getMessage(),
+        'file' => $e->getFile(),
+        'line' => $e->getLine(),
+        'trace' => $e->getTraceAsString() // Pour voir où ça bloque exactement
+    ]);
 
-            Log::critical("PAYIN EXCEPTION", [
-                'error' => $e->getMessage(),
-                'payload' => $data
-            ]);
-
-            return [
-                'success' => false,
-                'message' => 'Erreur serveur lors du paiement'
-            ];
-        }
+}
     }
 
     /**
@@ -94,6 +90,7 @@ class FusionPayService
      */
     public function payOut(array $data)
     {
+        logger(json_encode($data));
         try {
             $payload = [
                 "countryCode" => $data['country_code'],

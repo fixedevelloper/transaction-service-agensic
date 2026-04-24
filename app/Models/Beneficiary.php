@@ -8,21 +8,12 @@ class Beneficiary extends Model
 {
     use HasFactory;
 
-    protected $fillable = [
-        'user_id',
-        'code',
-        'name',
-        'phone',
-        'bank_account',
-        'mobile_wallet',
-        'country',
-        'city',
-        'address',
-        'identification_number',
-        'identification_type',
-        'identification_expired',
-        'status',
-    ];
+protected $fillable = [
+    'user_id', 'name', 'account_type', 'business_name', 'business_type', 
+    'business_register_date', 'date_birth', 'phone', 'bank_account', 
+    'mobile_wallet', 'country', 'city', 'address', 
+    'identification_number', 'identification_type', 'identification_expired'
+];
 
     // Un bénéficiaire peut recevoir plusieurs transactions
     public function transactions()

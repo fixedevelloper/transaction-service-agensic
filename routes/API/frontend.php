@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\CallbackController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\GatewayController;
 use App\Http\Controllers\PaymentController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\SenderController;
@@ -28,10 +29,11 @@ Route::middleware(['api'])->group(function () {
     Route::get('transactions', [TransactionController::class, 'index']);
     Route::get('my-transactions', [TransactionController::class, 'my_transactions']);
     Route::post('transactions', [TransactionController::class, 'store']);
+     Route::post('deposits', [TransactionController::class, 'deposit']);
     Route::get('transactions/{transaction}', [TransactionController::class, 'show']);
     Route::post('calculate-fees', [TransactionController::class, 'calculateFees']);
     Route::get('banks', [TransactionController::class, 'getBankList']);
-     Route::get('wace-data', [TransactionController::class, 'getWaceData']);
+    Route::get('wace-data', [TransactionController::class, 'getWaceData']);
 });
 Route::post('/moneyfusion/webhook', [CallbackController::class, 'payoutWebhook'])->name('moneyfusion_webhook');
 Route::prefix('payments')->group(function () {
@@ -50,3 +52,7 @@ Route::get('/customer/dashboard', [
     DashboardController::class,
     'index'
 ]);
+Route::get('/gateways', [GatewayController::class, 'index']);
+Route::post('/gateways', [GatewayController::class, 'store']);
+Route::get('/gateway-matrix', [GatewayController::class, 'matrix']);
+Route::post('/gateway-matrix', [GatewayController::class, 'save']);
