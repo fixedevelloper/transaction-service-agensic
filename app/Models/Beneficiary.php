@@ -11,7 +11,7 @@ class Beneficiary extends Model
 protected $fillable = [
     'user_id', 'name', 'account_type', 'business_name', 'business_type', 
     'business_register_date', 'date_birth', 'phone', 'bank_account', 
-    'mobile_wallet', 'country', 'city', 'address', 
+    'mobile_wallet', 'country', 'city', 'address', 'code',
     'identification_number', 'identification_type', 'identification_expired'
 ];
 
