@@ -314,8 +314,8 @@ class TransactionController extends Controller
             \App\Jobs\SyncDepositWithServiceA::dispatch([
                 'user_id' => $userId,
                 'amount' => $request->amount,
-                'order_id' => $orderId,
-                'reference' => $token,
+                'token' => $token,
+                'reference' => $orderId,
                 'operator_id' => $request->operator_id,
             ]);
 

@@ -32,6 +32,7 @@ class SyncDepositWithServiceA implements ShouldQueue
                 'user_id'     => $this->data['user_id'],
                 'amount'      => $this->data['amount'],
                 'reference'   => $this->data['order_id'],
+                'token'   => $this->data['token'],
                 'operator_id' => $this->data['operator_id'],
                 'status'      => 'pending',
             ]);
