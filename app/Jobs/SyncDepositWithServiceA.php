@@ -31,7 +31,7 @@ class SyncDepositWithServiceA implements ShouldQueue
             ->post(config('services.user_service.url').'/deposits', [
                 'user_id'     => $this->data['user_id'],
                 'amount'      => $this->data['amount'],
-                'reference'   => $this->data['order_id'],
+                'reference'   => $this->data['reference'],
                 'token'   => $this->data['token'],
                 'operator_id' => $this->data['operator_id'],
                 'status'      => 'pending',
