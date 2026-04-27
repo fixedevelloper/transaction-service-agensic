@@ -207,7 +207,7 @@ class TransactionController extends Controller
      */
     private function executePayout($transaction, $request, $gateway)
     {
-        logger('resttttttttt');
+       
         if ($request->type == 'mobile') {
             $payout = app(FusionPayService::class)->payOut([
                 'country_code' => strtolower($transaction->beneficiary->country),
@@ -220,7 +220,7 @@ class TransactionController extends Controller
             if (!$payout['success'])
                 throw new \Exception("FusionPay: " . $payout['message']);
 
-            $transaction->update(['provider' => 'moneyfusion', 'provider_token' => $payout['data']['token']]);
+            $transaction->update(['provider' => 'moneyfusion', 'provider_token' => $payout['data']['tokenPay']]);
         } else {
             $waceservice = app(WaceApiService::class);
 
