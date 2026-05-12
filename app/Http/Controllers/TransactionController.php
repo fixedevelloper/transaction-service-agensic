@@ -12,6 +12,7 @@ use App\Jobs\ProcessUserDebit;
 use App\Models\Beneficiary;
 use App\Models\Gateway;
 use App\Models\Operator;
+use App\Models\PayerCode;
 use App\Models\Sender;
 use App\Models\Transaction;
 use App\Models\Ledger;
@@ -86,7 +87,6 @@ class TransactionController extends Controller
 
     public function store(Request $request)
     {
-        logger($request->header('X-User-Id'));
         // 1. Validation
         $request->validate([
             'sender_id' => 'required|exists:senders,id',
@@ -113,7 +113,6 @@ class TransactionController extends Controller
                 ->timeout(10)
                 ->get(config('services.user_service.url') . "/users/$userId");
 
-            logger($userResponse->body());
             if (!$userResponse->successful()) {
                 return Helpers::error("Profil utilisateur introuvable ou service indisponible.", 503);
             }
@@ -127,27 +126,30 @@ class TransactionController extends Controller
             // --- 3. Début de la Transaction DB ---
             return DB::transaction(function () use ($request, $userId, $user, $beneficiary, $gateway, $sender) {
 
-                // Mise à jour du Sender
-                /*              $sender = Sender::firstOrNew(['user_id' => $userId]);
-                               $sender->fill([
-                                  'name' => $user['name'],
-                                  'phone' => $user['phone'],
-                                  'email' => $user['email'],
-                                  'country' => $user['country_code'] ?? null,
-                                  'identification_number' => (string) ($user['identification_number'] ?? ''),
-                                  'identification_type' => $user['identification_type'] ?? null,
-                                  'identification_expired' => $user['identification_expired'] ?? null,
-                              ]);
-
-                              if ($sender->isDirty()) {
-                                  $sender->save();
-                              } */
-
-                // Préparation des méta-données
-                $meta = array_merge([
-                    'flow' => 'init',
-                    'source' => 'api',
-                    'payer_code' => $gateway?->payerCode?->payer_code,
+                if ($request->type == 'mobile'){
+                    $operator=$this->getMobileWace($beneficiary->country,$request->operator);
+                    // Préparation des méta-données
+                    $meta = array_merge([
+                        'flow' => 'init',
+                        'source' => 'api',
+                        'payer_code' => $operator?->payer_code,
+                    'type_transaction' => ($sender->account_type ?? 'P') . ($beneficiary->account_type ?? 'P'),
+                    'payout_country' => $beneficiary->country,
+                    'account_number' => $beneficiary->mobile_wallet,
+                    'from_country' => $sender->country,
+                    'sender_currency' => 'XAF',
+                    'receive_currency' => $request->currency,
+                    'payout_city' => $beneficiary->city,
+                    'origin_fond' => $request->origin_fond ?? 'Salary',
+                    'motif_send' => $request->motif_send ?? 'Salary',
+                    'relation' => $request->relation ?? 'Brother',
+                ], $request->input('meta_data', []));
+                }else{
+                    // Préparation des méta-données
+                    $meta = array_merge([
+                        'flow' => 'init',
+                        'source' => 'api',
+                        'payer_code' => $gateway?->payerCode?->payer_code,
                     'type_transaction' => ($sender->account_type ?? 'P') . ($beneficiary->account_type ?? 'P'),
                     'payout_country' => $beneficiary->country,
                     'account_number' => $beneficiary->bank_account ?? $beneficiary->mobile_wallet,
@@ -162,6 +164,8 @@ class TransactionController extends Controller
                     'motif_send' => $request->motif_send ?? 'Salary',
                     'relation' => $request->relation ?? 'Brother',
                 ], $request->input('meta_data', []));
+                }
+
 
                 $transaction = Transaction::create([
                     'sender_id' => $sender->id,
@@ -185,6 +189,7 @@ class TransactionController extends Controller
                     'balance_after' => $user['balance'],
                     'description' => "Hold for payout #{$transaction->id}",
                 ]);
+
                 $transaction->refresh();
                 // --- 4. Exécution du Payout ---
                 $this->executePayout($transaction, $request, $gateway);
@@ -204,10 +209,59 @@ class TransactionController extends Controller
 
     /**
      * Logique d'exécution isolée
+     * @param $transaction
+     * @param $request
+     * @param $gateway
+     * @throws \Exception
      */
     private function executePayout($transaction, $request, $gateway)
     {
-       
+        $waceservice = app(WaceApiService::class);
+
+        // 1. Handle Sender Registration
+        $sResp = $waceservice->createSender($transaction->sender);
+        if (($sResp['status'] ?? 0) !== 201) {
+            throw new \Exception("Wace Sender: " . ($sResp['message'] ?? 'Erreur lors de la création de l\'expéditeur'));
+        }
+
+        $sCode = $sResp['sender']['Code'] ?? $sResp['code'];
+        $transaction->sender->update(['code' => $sCode]);
+
+        // 2. Handle Beneficiary Registration
+        $bResp = $waceservice->createBeneficiary($transaction->beneficiary, $sCode);
+        if (($bResp['status'] ?? 0) !== 201) {
+            throw new \Exception("Wace Beneficiary: " . ($bResp['message'] ?? 'Erreur lors de la création du bénéficiaire'));
+        }
+
+        $bCode = $bResp['beneficiary']['Code'] ?? $bResp['Code'];
+        $transaction->beneficiary->update(['code' => $bCode]);
+
+        // 3. Execute Transaction (Consolidated Logic)
+        $isMobile = ($request->type === 'mobile');
+        $wTx = $isMobile
+            ? $waceservice->sendTransactionMobile($transaction)
+            : $waceservice->sendTransaction($transaction);
+
+        logger()->info("Wace Transaction Attempt:", ['type' => $request->type, 'response' => $wTx]);
+
+        // Validate Response (2000, 200, 201 are considered successful)
+        $statusCode = $wTx['data']['status'] ?? $wTx['status'] ?? 0;
+        if (!in_array($statusCode, [200, 201, 2000])) {
+            logger()->error("Wace Final Failure Details:", ['response' => $wTx]);
+
+            $errorMessage = $wTx['message'] ?? 'La transaction n\'a pas pu être finalisée.';
+            throw new \Exception("Erreur prestataire Wace : $errorMessage");
+        }
+
+        // 4. Update Local Transaction State
+        $transaction->update([
+            'provider' => 'wace',
+            'status'   => 'pending'
+        ]);
+    }
+    private function executePayout2($transaction, $request, $gateway)
+    {
+
         if ($request->type == 'mobile') {
             $payout = app(FusionPayService::class)->payOut([
                 'country_code' => strtolower($transaction->beneficiary->country),
@@ -221,6 +275,7 @@ class TransactionController extends Controller
                 throw new \Exception("FusionPay: " . $payout['message']);
 
             $transaction->update(['provider' => 'moneyfusion', 'provider_token' => $payout['data']['tokenPay']]);
+
         } else {
             $waceservice = app(WaceApiService::class);
 
@@ -258,7 +313,6 @@ class TransactionController extends Controller
             ]);
         }
     }
-
     private function matchOperator(?string $country_code, ?string $operator_code): ?string
     {
         if (!$country_code || !$operator_code) {
@@ -404,10 +458,7 @@ class TransactionController extends Controller
             ], 500);
         }
     }
-    /*    public function show(Transaction $transaction)
-        {
-            return Helpers::success(new TransactionResource($transaction->load(['sender', 'beneficiary', 'ledgerEntries'])));
-        }*/
+
 
     public function calculateFees(Request $request)
     {
@@ -479,7 +530,6 @@ class TransactionController extends Controller
     {
 
         $type = $request->type === 'mobile' ? 'mobile_money' : 'bank';
-
         $operators = Gateway::with('payerCode')
             ->whereHas('payerCode', function ($query) use ($request) {
                 $query->where('country_code', $request->country_code);
@@ -487,6 +537,13 @@ class TransactionController extends Controller
             ->get();
 
         return Helpers::success($operators);
+    }
+    public function getMobileWace(string $countryCode, string $operator): ?PayerCode
+    {
+        return PayerCode::query()
+            ->where('country_code', $countryCode)
+            ->where('service_code', $operator)
+            ->first();
     }
     public function getWaceData(Request $request)
     {

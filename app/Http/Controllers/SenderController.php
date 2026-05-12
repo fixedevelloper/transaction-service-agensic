@@ -29,22 +29,23 @@ public function store(Request $request)
         'country' => 'nullable|string|max:3',
         'address' => 'nullable|string',
         'city' => 'nullable|string',
-        
+
         // Champs Spécifiques Entreprise
         'business_name' => 'nullable|string|max:255',
         'business_type' => 'nullable|string',
         'business_register_date' => 'nullable|date_format:Y-m-d',
-        
+
         // Champs Spécifiques Personnel
         'gender' => 'nullable|in:M,F',
         'date_birth' => 'nullable|date_format:Y-m-d',
-        
+
         // Identification
         'identification_number' => 'nullable|string',
         'identification_type' => 'nullable|string',
         'identification_expired' => 'nullable|date_format:Y-m-d',
     ]);
 
+    logger($validated);
     // 1. Préparation des critères de recherche (pour l'update)
     // On cherche par ID ET par user_id pour éviter qu'un utilisateur modifie le sender d'un autre
     $searchAttributes = [
@@ -52,9 +53,10 @@ public function store(Request $request)
         'user_id' => $userId
     ];
 
+    logger('ID'.$request->id);
     // Si pas d'ID, on vide les attributs de recherche pour forcer un 'create'
     if (!$request->id) {
-        $searchAttributes = ['id' => null]; 
+        $searchAttributes = ['id' => null];
         // Note: Laravel ignorera l'id null et créera une nouvelle entrée
     }
 
@@ -62,10 +64,10 @@ public function store(Request $request)
     $data = $request->only([
         'name', 'phone', 'email', 'country', 'address', 'city',
         'account_type', 'business_type', 'business_name', 'business_register_date',
-        'gender', 'date_birth', 'identification_number', 
+        'gender', 'date_birth', 'identification_number',
         'identification_type', 'identification_expired'
     ]);
-    
+
     // On s'assure que le user_id est bien présent dans les données de mise à jour
     $data['user_id'] = $userId;
 
@@ -90,7 +92,7 @@ public function store(Request $request)
 {
     // 1. Sécurité : Vérifier que l'expéditeur appartient bien à l'utilisateur
     $userId = $request->header('X-User-Id');
-    
+
     if ($sender->user_id != $userId) {
         return response()->json(['message' => 'Action non autorisée.'], 403);
     }

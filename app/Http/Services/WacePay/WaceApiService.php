@@ -325,44 +325,43 @@ class WaceApiService implements WaceApiInterface
      */
     public function sendTransactionMobile(Transaction $transaction)
     {
-        $sender = $this->createSender($transaction);
+        $meta = $transaction->meta_data;
+        $payload = [
+            'payerCode'       => $meta->payer_code ?? null,
+            'businessType'    => $meta->type_transaction ?? null,
+            'payoutCountry'   => $meta->payout_country ?? null,
+            'amountToPaid'    => (float) $transaction->amount,
+            'senderCode'      => $transaction->sender->code ?? null,
+            'beneficiaryCode' => $transaction->beneficiary->code ?? null,
+            'mobileReceiveNumber' => $meta->account_number ?? null,
+            'fromCountry'     => $meta->from_country ?? null,
+            'fromCurrency'     => $meta->sender_currency ?? null,
+            'sendingCurrency' => $meta->sender_currency ?? 'XAF',
+            'receiveCurrency' => $meta->receive_currency ?? 'XAF',
+            'payoutCity'      => $meta->payout_city ?? null,
+            'comment'         => $meta->comment ?? 'Payout',
+            'originFund'      => $meta->origin_fond ?? null,
+            'reason'          => $meta->motif_send ?? null,
+            'relation'        => $meta->relation ?? null,
+        ];
+        $res = $this->request('api/v1/transaction/wallet/create', $payload);
 
-        if (($sender['status'] ?? null) !== 200) {
-            return $this->error(5001, 'Sender failed');
+        // Wace renvoie souvent 200 ou 201 pour un succès de création
+        if (!in_array($res['status'] ?? null, [200, 201, 2000])) {
+            return [
+                'status'  => 'error',
+                'message' => $res['message'] ?? 'Transaction failed'
+            ];
         }
 
-
-        $beneficiary = $this->createBeneficiary($transaction, $sender['sender']['Code']);
-
-       
-        if ( !in_array($beneficiary['status'] ?? null, [200, 201, 2000])) {
-            return $this->error(5002, 'Beneficiary failed');
-        }
-
-        $res = $this->request('api/v1/transaction/wallet/create', [
-            'payerCode' => $transaction->gatewayItem->payer_code,
-            'businessType' => $transaction->type_transaction,
-            'payoutCountry' => $transaction->gatewayItem->country->codeIso2,
-            'amountToPaid' => $transaction->amount_total,
-            'senderCode' => $sender['sender']['Code'],
-            'beneficiaryCode' => $beneficiary['beneficiary']['Code'],
-            'mobileReceiveNumber' => $transaction->accountNumber,
-            'service' => $transaction->gatewayItem->name,
-            'fromCountry' => $transaction->country->country->codeIso2,
-            //'sendingCurrency' => $transaction->sender->currency,
-            // 'receiveCurrency' => $transaction->gatewayItem->country->currency,
-            'payoutCity' => $transaction->city,
-            'comment' => $transaction->comment,
-            'originFund' => $transaction->origin_fond,
-            'reason' => $transaction->motif_send,
-            'relation' => $transaction->relation,
+        $transaction->update([
+            'provider' => 'wace',
+            'provider_token' => $res['transaction']['reference'],
+            'status' => 'processing',
+            'debit_status' => 'pending',
         ]);
-
-        if (($res['status'] ?? null) !== 200) {
-            return $this->error($res['status'], $res['message'] ?? 'Wallet failed');
-        }
-
-        return $this->validate($res['transaction']['reference']);
+        // On valide la transaction si l'API demande une validation séparée
+        return $this->validate($res['transaction']['reference'] ?? $res['reference']);
     }
 
     /**
@@ -380,7 +379,7 @@ public function validate(string $reference)
     if ($isSuccess) {
         // Optionnel : tu peux logger la validation réussie
         logger("Wace Transaction Validée: $reference");
-        
+
         return [
             'success' => true,
             'data' => $res,
