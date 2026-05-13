@@ -4,6 +4,7 @@ use App\Http\Controllers\CallbackController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\GatewayController;
 use App\Http\Controllers\PaymentController;
+use App\Http\Controllers\SimulationController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\SenderController;
 use App\Http\Controllers\BeneficiaryController;
@@ -55,4 +56,11 @@ Route::get('/customer/dashboard', [
 Route::get('/gateways', [GatewayController::class, 'index']);
 Route::post('/gateways', [GatewayController::class, 'store']);
 Route::get('/gateway-matrix', [GatewayController::class, 'matrix']);
+Route::get('/gateway-matrix/{iso}', [GatewayController::class, 'matrixByIDCountry']);
 Route::post('/gateway-matrix', [GatewayController::class, 'save']);
+Route::post('/gateway-matrix/sync-country', [GatewayController::class, 'saveSync']);
+Route::prefix('simulation')->group(function () {
+    Route::get('/calculate-fees', [SimulationController::class, 'calculateFees']);
+    Route::get('/senders', [SimulationController::class, 'getSenders']);
+    Route::post('/send', [SimulationController::class, 'send']);
+});

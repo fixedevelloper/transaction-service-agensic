@@ -14,7 +14,7 @@ class SenderResource extends JsonResource
     {
         return [
             'id' => $this->id,
-
+            'account_type' => $this->account_type,
             // Infos principales
             'name' => $this->name,
             'phone' => $this->phone,

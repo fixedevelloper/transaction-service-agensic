@@ -550,6 +550,7 @@ class TransactionController extends Controller
 
         $type = $request->type;
 
+        logger($type);
         $wacedatas = WaceData::query()
             ->where('type', $type)
             ->get();

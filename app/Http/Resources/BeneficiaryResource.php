@@ -12,6 +12,7 @@ class BeneficiaryResource extends JsonResource
         return [
             'id' => $this->id,
             'code' => $this->code,
+            'account_type' => $this->account_type,
 
             // Infos
             'name' => $this->name,

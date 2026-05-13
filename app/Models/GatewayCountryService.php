@@ -98,4 +98,5 @@ class GatewayCountryService extends Model
 
         return $fee;
     }
+
 }

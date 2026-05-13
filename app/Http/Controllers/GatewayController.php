@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use Exception;
 use Illuminate\Http\Request;
 use App\Models\PaymentGateway;
 use App\Models\GatewayCountryService;
@@ -70,6 +71,33 @@ class GatewayController extends Controller
             'matrix' => $matrix
         ]);
     }
+    public function matrixByIDCountry($iso)
+    {
+        logger($iso);
+        // 1. Récupérer les services avec la relation gateway
+        // Attention : Vérifie si ta colonne est 'country_iso' ou 'country_code'
+        // d'après ta migration précédente c'était 'country_code'
+        $services = GatewayCountryService::with('gateway')
+            ->where('country_code', $iso)
+            ->get();
+
+        // 2. Transformer la collection pour le frontend
+        $data = $services->map(function ($service) {
+            return [
+                'id' => $service->id,
+                'gateway_name' => $service->gateway->name ?? 'Unknown',
+                'service_type' => $service->service_type,
+                'fixed_fee' => (float) $service->fixed_fee,
+                'percent_fee' => (float) $service->percent_fee,
+                'is_enabled' => (bool) $service->is_enabled,
+                'meta' => $service->meta, // Laravel cast automatiquement en array si défini dans le Model
+            ];
+        });
+
+        return response()->json([
+            'data' => $data
+        ]);
+    }
 
     /**
      * =========================================
@@ -106,5 +134,46 @@ class GatewayController extends Controller
             'success' => true,
             'message' => 'Matrix saved successfully'
         ]);
+    }
+    public function saveSync(Request $request)
+    {
+        $configs = $request->input('configs');
+
+        foreach ($configs as $config) {
+            GatewayCountryService::where('id', $config['id'])->update([
+                'meta' => $config['meta']
+            ]);
+        }
+
+        return response()->json(['message' => 'Success']);
+    }
+    public static function calculateFees($country, $service, $amount)
+    {
+        $config = GatewayCountryService::where('country_code', $country)
+            ->where('service_type', $service)
+            ->where('is_enabled', true)
+            ->first();
+
+        if (!$config) throw new Exception("Configuration introuvable");
+
+        // Valeurs par défaut (si aucun palier ne match)
+        $fixedFee = $config->fixed_fee;
+        $percentFee = $config->percent_fee;
+
+        // Vérification des paliers dans meta
+        if ($config->meta && isset($config->meta['tiers'])) {
+            foreach ($config->meta['tiers'] as $tier) {
+                $min = $tier['min'];
+                $max = $tier['max'] ?? PHP_INT_MAX; // Si max est null, c'est l'infini
+
+                if ($amount >= $min && $amount <= $max) {
+                    $fixedFee = $tier['fixed_fee'];
+                    $percentFee = $tier['percent_fee'];
+                    break; // On a trouvé le bon palier
+                }
+            }
+        }
+
+        return ($amount * ($percentFee / 100)) + $fixedFee;
     }
 }
