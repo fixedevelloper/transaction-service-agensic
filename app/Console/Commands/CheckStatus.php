@@ -26,7 +26,7 @@ class CheckStatus extends Command
     public function handle()
     {
         // On récupère les transactions 'pending' ou 'processing'
-        $transactions = Transaction::where('type', 'bank')
+        $transactions = Transaction::query()
             ->whereIn('status', ['pending', 'processing'])
             ->get();
 
@@ -54,14 +54,14 @@ class CheckStatus extends Command
                 if ($waceStatus === 'PAID') {
                     $transaction->update(['status' => 'success']);
                     $this->info("Transaction {$transaction->reference} marquée comme SUCCESS.");
-                } 
+                }
                 elseif (in_array($waceStatus, ['CANCELED', 'LOCKED', 'REJECTED'])) {
                     // Si échoué, on met à jour et on rembourse l'utilisateur
                     $transaction->update(['status' => 'failed']);
-                    
+
                     // Remboursement via le UserService
                     $refund = $this->userService->credit($transaction);
-                    
+
                     if ($refund) {
                         $this->warn("Transaction {$transaction->reference} FAILED. Utilisateur remboursé.");
                     } else {
