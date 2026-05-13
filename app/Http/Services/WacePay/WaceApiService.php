@@ -156,7 +156,7 @@ class WaceApiService implements WaceApiInterface
                 'regiterBusinessDate' => optional($sender->business_register_date)->format('Y-m-d'),
 
                 'updateIfExist' => true,
-                'occupation' => $sender->occupation,
+                'occupation' => $sender->occupation??' Develloper',
                 'state' => '',
                 'zipcode' => '78958',
                 'comment' => 'new sender created',
