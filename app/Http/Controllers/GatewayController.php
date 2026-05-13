@@ -6,6 +6,7 @@ use Exception;
 use Illuminate\Http\Request;
 use App\Models\PaymentGateway;
 use App\Models\GatewayCountryService;
+use Illuminate\Support\Facades\Validator;
 
 class GatewayController extends Controller
 {
@@ -28,23 +29,39 @@ class GatewayController extends Controller
      */
     public function store(Request $request)
     {
-        $request->validate([
-            'name' => 'required|string|unique:payment_gateways,name',
-            'code' => 'required|string|unique:payment_gateways,code',
-            'type' => 'nullable|string',
+        $validator = Validator::make($request->all(), [
+            'name'        => 'required|string|max:255',
+            'code'        => 'required|string|unique:payment_gateways,code',
+            'type'        => 'required|in:fintech,bank_api,mobile_money',
+            'is_active'   => 'boolean',
+            'logo'        => 'nullable|string',
+            'website'     => 'nullable|url',
+            'credentials' => 'nullable|array',
+            'settings'    => 'nullable|array',
         ]);
 
-        $gateway = PaymentGateway::create([
-            'name' => $request->name,
-            'code' => $request->code,
-            'type' => $request->type,
-            'is_active' => true,
-        ]);
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'errors' => $validator->errors()
+            ], 422);
+        }
 
-        return response()->json([
-            'message' => 'Gateway created successfully',
-            'data' => $gateway
-        ]);
+        try {
+            $gateway = PaymentGateway::create($request->all());
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Gateway créée avec succès',
+                'data' => $gateway
+            ], 201);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Erreur lors de la création : ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     /**
