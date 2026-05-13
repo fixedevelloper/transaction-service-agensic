@@ -26,7 +26,7 @@ class CheckStatus extends Command
     public function handle()
     {
         // On récupère les transactions 'pending' ou 'processing'
-        $transactions = Transaction::query()
+        $transactions = Transaction::query('provider', 'wace')
             ->whereIn('status', ['pending', 'processing'])
             ->get();
 
