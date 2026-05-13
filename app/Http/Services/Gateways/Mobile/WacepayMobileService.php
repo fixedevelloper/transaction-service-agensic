@@ -67,6 +67,7 @@ class WacepayMobileService
                 // Détermination du payer_code via une logique interne (ex: pays + opérateur)
                 $operatorInfo = $this->getMobileWace($beneficiary->country, $data['operator'] ?? '');
 logger('*****************************');
+                logger(json_encode($data));
                 logger($operatorInfo);
                 $meta = array_merge([
                     'flow'             => 'init',
