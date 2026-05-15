@@ -30,7 +30,7 @@ Route::middleware(['api'])->group(function () {
     Route::get('transactions', [TransactionController::class, 'index']);
     Route::get('my-transactions', [TransactionController::class, 'my_transactions']);
     Route::post('transactions', [TransactionController::class, 'store']);
-     Route::post('deposits', [TransactionController::class, 'deposit']);
+    Route::post('deposits', [TransactionController::class, 'deposit']);
     Route::get('transactions/{transaction}', [TransactionController::class, 'show']);
     Route::post('calculate-fees', [TransactionController::class, 'calculateFees']);
     Route::get('banks', [TransactionController::class, 'getBankList']);

@@ -2,8 +2,10 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Helpers\Helpers;
 use App\Http\Services\TransferService;
 use App\Models\Sender;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use App\Models\GatewayCountryService;
 use App\Models\User;
@@ -19,8 +21,11 @@ class SimulationController extends Controller
     {
         $this->transferService = $transferService;
     }
+
     /**
      * Étape 1 & 5 : Calcul des frais et récupération des passerelles
+     * @param Request $request
+     * @return JsonResponse
      */
     public function calculateFees(Request $request)
     {
@@ -59,7 +64,11 @@ class SimulationController extends Controller
         });
 
         // Pour l'étape 1, on renvoie souvent la passerelle par défaut (la première)
-        return response()->json([
+/*        return response()->json([
+            'selected_config' => $results->first(),
+            'available_gateways' => $results
+        ]);*/
+        return Helpers::success([
             'selected_config' => $results->first(),
             'available_gateways' => $results
         ]);
@@ -117,7 +126,8 @@ class SimulationController extends Controller
 
             // Note et Meta
             'note'             => 'nullable|string|max:255',
-            'meta_data'        => 'nullable|array'
+            'meta_data'        => 'nullable|array',
+            'swiftcode'             => 'nullable|string|max:255',
         ]);
 
         try {
