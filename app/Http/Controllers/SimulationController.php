@@ -43,7 +43,7 @@ class SimulationController extends Controller
         $configs = GatewayCountryService::with('gateway')
             ->where('country_code', $country)
             ->where('service_type', $type)
-           // ->where('is_enabled', true)
+            ->where('is_enabled', true)
             ->orderBy('priority', 'asc')
             ->get();
 

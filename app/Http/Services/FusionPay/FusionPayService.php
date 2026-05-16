@@ -5,6 +5,7 @@ namespace App\Http\Services\FusionPay;
 
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Uid\Factory\string;
 
 class FusionPayService
 {
@@ -146,6 +147,8 @@ class FusionPayService
 
     /**
      * Vérifier statut paiement
+     * @param string $token
+     * @return array|mixed
      */
     public function checkPayment(string $token)
     {

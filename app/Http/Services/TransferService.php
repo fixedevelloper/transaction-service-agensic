@@ -4,6 +4,8 @@
 namespace App\Http\Services;
 
 use App\Http\Services\Gateways\Bank\WacepayBankService;
+use App\Http\Services\Gateways\Mobile\AgensicPayService;
+use App\Http\Services\Gateways\Mobile\MoneyFusionService;
 use App\Http\Services\Gateways\Mobile\WacepayMobileService;
 use App\Models\GatewayCountryService;
 use Exception;
@@ -31,8 +33,7 @@ class TransferService
             ->with('gateway') // On charge la relation pour éviter les requêtes N+1
             ->where('country_code', $countryCode)
             ->where('service_type', $type)
-           // ->where('gateway_slug', $operatorSlug) // CRUCIAL : On vérifie que c'est le bon opérateur
-          //  ->where('status', 'active')
+            ->where('is_enabled', true)
             ->first();
 
         if (!$serviceConfig) {
@@ -72,8 +73,8 @@ class TransferService
     {
         return match (strtolower($gatewayCode)) {
         'wacepay' => app(WacepayMobileService::class),
-            'orange'  => app(OrangeMoneyService::class),
-            'mtn'     => app(MtnMoneyService::class),
+            'moneyfusion'  => app(MoneyFusionService::class),
+            'agensicpay'     => app(AgensicPayService::class),
             default   => throw new Exception("Passerelle Mobile [{$gatewayCode}] non implémentée."),
         };
     }
@@ -82,6 +83,7 @@ class TransferService
     {
         return match (strtolower($gatewayCode)) {
         'wacepay' => app(WacepayBankService::class),
+         'agensicpay'     => app(AgensicPayService::class),
             default   => throw new Exception("Passerelle Bancaire [{$gatewayCode}] non implémentée."),
         };
     }
